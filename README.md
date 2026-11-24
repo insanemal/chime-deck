@@ -16,8 +16,9 @@ No cloud. No account. No vendor. A cheap Linux box, your Home Assistant, your MQ
 <p align="center">
   <img src="docs/images/dashboard.png"
        alt="The ChimeDeck dashboard: six tiles showing live Home Assistant state, a control rail of four large buttons on the right, and the Garage Door tile selected"><br>
-  <sub>1280×720, live states over the Home Assistant websocket. The blue outline and tick mean
-  <b>Garage Door</b> is selected — and Home Assistant can see that.</sub>
+  <sub>Kiosk mode, exactly as it runs on the wall: 1280×720, live states over the Home Assistant
+  websocket. The blue outline and tick mean <b>Garage Door</b> is selected — and Home Assistant can
+  see that.</sub>
 </p>
 
 | | |
