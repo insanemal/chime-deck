@@ -137,6 +137,26 @@ const RAIL_VIEWPORTS = [
   { width: 720, height: 1280 } // portrait (D30)
 ] as const;
 
+/**
+ * The five panels the header's two gutters are measured on (cd-qvt2).
+ *
+ * A fourth list, not `VIEWPORTS`, `MATRIX`, `SCALE_VIEWPORTS` or
+ * `RAIL_VIEWPORTS`: each of those is another test's contract (the fill tests'
+ * four landscape sizes, the amendment's seven shapes, the scale matrix and the
+ * rail's four panels), and this test asks a fifth question — does the clock pin
+ * the right gutter while the pills stay by the title — at the three landscape
+ * panels the owner named plus the two narrow widths where the header has to
+ * wrap instead of clip. Folding these into any of the others would change what
+ * that test asserts, so the list stays its own.
+ */
+const HEADER_VIEWPORTS = [
+  { width: 1280, height: 720 }, // the reference panel, the size the owner measured
+  { width: 1024, height: 600 }, // the wall panel
+  { width: 1920, height: 1080 },
+  { width: 720, height: 1280 }, // portrait: the clock must wrap, not clip
+  { width: 320, height: 568 } // the narrowest case the wrap has to survive
+] as const;
+
 /** The off-origin watch the `beforeEach` attached; asserted at the end of each test. */
 let watch: OffOriginWatch;
 
@@ -2950,6 +2970,199 @@ test('every horizontal gutter on the dashboard is 16px, and the wider rail keeps
         `${detail}; ${JSON.stringify(glyph)}`
     ).toBeLessThanOrEqual(0.44);
   }
+
+  watch.assertAllLocal();
+});
+
+/**
+ * cd-qvt2: the header has one layout in both modes — the title (browser only)
+ * and the status pills on the left `--gap`, the clock pinned to the right one.
+ *
+ * The defect was structural: the clock lived inside `.tools`, so with kiosk's
+ * title removed, a `space-between` header put the whole cluster at the start of
+ * the row and left the right-hand side of the wall empty. Here the assertions
+ * are therefore two kinds at once: the **structure** (the clock is `.header`'s
+ * own child, not a pill) and the **box** at five panel shapes. A clock still
+ * nested in `.tools` fails the count; a clock without the auto margin fails the
+ * right-gutter assertion; and a `space-between` that came back fails the gap
+ * from the title to the pills.
+ *
+ * At the three landscape panels the pre-existing header height and first-tile
+ * top are re-asserted, because the fix may not buy its right gutter from the
+ * panel's vertical budget. At the two narrow widths the clock cannot share a
+ * row, so the explicit non-intersection test is the wrap proof rather than a
+ * lucky absence of overlap.
+ */
+test('cd-qvt2: the clock pins the right gutter and the pills sit by the title, in browser mode', async ({
+  page,
+  request
+}) => {
+  // Five page loads, each with the real backend reads behind it, plus the 115%
+  // reload: the same headroom argument as the rail and gutter tests above.
+  test.setTimeout(120_000);
+
+  /** `--gap`: the one inset the header spends, the same 16px as the tile grid. */
+  const GUTTER = 16;
+  /**
+   * Sub-pixel tolerance for every dimension here. `getBoundingClientRect()`
+   * returns fractions of a layout px (the title comes back 162.328125 wide at
+   * 1280), so ±1 is the honest bound: a 15px or 17px gutter still fails it,
+   * while a looser bound would stop proving 16 at all.
+   */
+  const TOLERANCE = 1;
+  /** The pre-existing header height at every landscape panel. */
+  const LANDSCAPE_HEADER_HEIGHT = 80;
+  /** `.content`'s `padding-block: var(--gap)` below that header. */
+  const LANDSCAPE_FIRST_TILE_TOP = 96;
+
+  const header = page.locator('.header');
+  const tools = page.locator('.header > .tools');
+  const clock = page.locator('.header > time.clock');
+  const product = page.locator('.product');
+
+  for (const viewport of HEADER_VIEWPORTS) {
+    const label = `${viewport.width}x${viewport.height}`;
+    await openWithTiles(page, request, SEED.length, viewport);
+
+    // The structure first: the clock left `.tools`, so it is a `.header` child
+    // and not a third pill. `.tools` still exists once; a page with no clock
+    // (`ui.show_clock` off) would make the box measurements below meaningless.
+    await expect(tools, `the header has no .tools of its own — ${label}`).toHaveCount(1);
+    await expect(clock, `the header has no own time.clock — ${label}`).toHaveCount(1);
+
+    const headerBox = await renderedBoxOf(header);
+    const toolsBox = await renderedBoxOf(tools);
+    const clockBox = await renderedBoxOf(clock);
+    const productBox = await renderedBoxOf(product);
+    const firstTileBox = await renderedBoxOf(page.locator(TILES).first());
+    const innerWidth = await page.evaluate(() => window.innerWidth);
+    const scrollWidth = await page.evaluate(
+      () => (document.scrollingElement ?? document.documentElement).scrollWidth
+    );
+
+    const afterTitle = toolsBox.left - productBox.right;
+    const clockInset = innerWidth - clockBox.right;
+    const firstTileTop = firstTileBox.top;
+    // The rectangles intersect on both axes: a clock painting over a pill.
+    const overlaps =
+      clockBox.right > toolsBox.left + TOLERANCE &&
+      clockBox.left < toolsBox.right - TOLERANCE &&
+      clockBox.bottom > toolsBox.top + TOLERANCE &&
+      clockBox.top < toolsBox.bottom - TOLERANCE;
+    const detail =
+      `header at ${label}: product ${productBox.left.toFixed(2)}→${productBox.right.toFixed(2)}, ` +
+      `tools ${toolsBox.left.toFixed(2)}→${toolsBox.right.toFixed(2)}, ` +
+      `clock ${clockBox.left.toFixed(2)}→${clockBox.right.toFixed(2)} ` +
+      `(top ${clockBox.top.toFixed(2)}, bottom ${clockBox.bottom.toFixed(2)}), ` +
+      `header ${headerBox.top.toFixed(2)}→${headerBox.bottom.toFixed(2)} ` +
+      `(h ${headerBox.height.toFixed(2)}), first tile top ${firstTileTop.toFixed(2)}, ` +
+      `innerWidth ${innerWidth}, scrollWidth ${scrollWidth}`;
+
+    // Logged before the assertions, so a failure still prints the evidence.
+    console.log(
+      `cd-qvt2 browser ${label}: product ${productBox.left.toFixed(2)}→` +
+        `${productBox.right.toFixed(2)}, tools ${toolsBox.left.toFixed(2)}→` +
+        `${toolsBox.right.toFixed(2)}, clock ${clockBox.left.toFixed(2)}→` +
+        `${clockBox.right.toFixed(2)}, header h ${headerBox.height.toFixed(2)}, ` +
+        `first tile top ${firstTileTop.toFixed(2)}, clock inset ${clockInset.toFixed(2)}`
+    );
+
+    // The left gutter: the title on `--gap`, then the pills immediately after
+    // it whenever they share a row. A `space-between` header would push the
+    // pills towards the clock instead. At 720x1280 and 320x568 the pills wrap
+    // to a row of their own — "immediately after the title" then means the
+    // gutter, because `.tools` starts a new line at the panel's left edge.
+    expect(
+      Math.abs(productBox.left - GUTTER),
+      `the title's left edge is not on the ${GUTTER}px gutter — ${detail}`
+    ).toBeLessThanOrEqual(TOLERANCE);
+    if (viewport.width > viewport.height) {
+      expect(
+        Math.abs(afterTitle - GUTTER),
+        `the title → pills gap is not ${GUTTER}px — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    } else {
+      expect(
+        Math.abs(toolsBox.left - GUTTER),
+        `the wrapped pills do not start on the ${GUTTER}px gutter — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    }
+
+    // The ticket's literal criterion: `right === innerWidth - 16`.
+    expect(
+      Math.abs(clockInset - GUTTER),
+      `the clock's right edge is not on the ${GUTTER}px gutter — ${detail}`
+    ).toBeLessThanOrEqual(TOLERANCE);
+
+    // Fully on screen, and below the header's own bottom edge: a clock pushed
+    // out of the viewport by a wrapped row would fail one of these.
+    expect(clockBox.left, `the clock starts off-screen — ${detail}`).toBeGreaterThanOrEqual(0);
+    expect(clockBox.right, `the clock ends off-screen — ${detail}`).toBeLessThanOrEqual(innerWidth);
+    expect(clockBox.top, `the clock starts above the viewport — ${detail}`).toBeGreaterThanOrEqual(0);
+    expect(
+      clockBox.bottom,
+      `the clock hangs below the header — ${detail}`
+    ).toBeLessThanOrEqual(headerBox.bottom + TOLERANCE);
+
+    // The wrap proof: at 720x1280 and 320x568 the clock owns a row of its own,
+    // so non-intersection is an explicit assertion rather than luck.
+    expect(overlaps, `the clock paints over the pills — ${detail}`).toBe(false);
+
+    // Nothing was pushed off-screen horizontally: this fails a row that grew a
+    // second column instead of wrapping.
+    expect(
+      scrollWidth,
+      `the document scrolls horizontally — ${detail}`
+    ).toBeLessThanOrEqual(innerWidth + TOLERANCE);
+
+    if (viewport.width > viewport.height) {
+      // The pre-existing landscape numbers, re-asserted so the pin cannot buy
+      // itself height: an 80px header puts the first tile at 96, 16px below it.
+      expect(
+        Math.abs(headerBox.height - LANDSCAPE_HEADER_HEIGHT),
+        `the landscape header is no longer ${LANDSCAPE_HEADER_HEIGHT}px — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+      expect(
+        Math.abs(firstTileTop - LANDSCAPE_FIRST_TILE_TOP),
+        `the first tile no longer starts at ${LANDSCAPE_FIRST_TILE_TOP}px — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    } else {
+      // `.content`'s `padding-block: var(--gap)`. The measured header heights
+      // are 166 at 720x1280, 310 at 480x800 and 374 at 320x568, with first tiles
+      // at 182, 326 and 390 — the clock's own wrapped row costs a header-level
+      // gap. The 480x800 pair is recorded even though this list stops at 320: it
+      // is the width between the two the test runs, and a future height change
+      // at any of the three should be a deliberate act.
+      expect(
+        Math.abs(firstTileTop - (headerBox.bottom + GUTTER)),
+        `the first tile is not one ${GUTTER}px gap below the header — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    }
+  }
+
+  // The pin is a token, not a viewport fraction or a hard-coded 16: at 115% the
+  // gutter itself scales, so the clock's right inset is 16 × 1.15 = 18.4px.
+  // `test.afterEach` already puts `ui.scale` back to 100, which is why this
+  // test does not restore it here.
+  await openWithTiles(page, request, SEED.length, PANEL);
+  await applyScale(request, 115);
+  await page.reload();
+  await expect(page.locator(TILES), 'six tiles after the 115% reload').toHaveCount(SEED.length);
+  await expect(page.locator(LIVE_TILES), 'live snapshot after the 115% reload').toHaveCount(
+    SEED.length
+  );
+  const scaledClockBox = await renderedBoxOf(clock);
+  const scaledInnerWidth = await page.evaluate(() => window.innerWidth);
+  const scaledInset = scaledInnerWidth - scaledClockBox.right;
+  console.log(
+    `cd-qvt2 browser 1280x720 @ ui.scale 115: clock right ${scaledClockBox.right.toFixed(2)}, ` +
+      `inset ${scaledInset.toFixed(2)} (expected ${(GUTTER * 1.15).toFixed(2)})`
+  );
+  expect(
+    Math.abs(scaledInset - GUTTER * 1.15),
+    `the clock's right inset is ${scaledInset.toFixed(2)}px at 115%, not ${(GUTTER * 1.15).toFixed(2)}px — ` +
+      `a viewport fraction or a hard-coded 16px would not scale with the token`
+  ).toBeLessThanOrEqual(TOLERANCE);
 
   watch.assertAllLocal();
 });

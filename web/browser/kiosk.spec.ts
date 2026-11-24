@@ -290,6 +290,71 @@ function expectHealthyLayout(report: LayoutReport): void {
   expect(report.contentScrollTop, detail).toBe(0);
 }
 
+/** A rendered border box, as the header measurements compare it. */
+interface HeaderBox {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/** The header's two gutters and the panel around them (cd-qvt2), in one read. */
+interface HeaderGeometry {
+  innerWidth: number;
+  innerHeight: number;
+  header: HeaderBox;
+  tools: HeaderBox;
+  clock: HeaderBox;
+  firstTile: HeaderBox;
+  docScrollWidth: number;
+  docScrollHeight: number;
+}
+
+/**
+ * Read the header geometry in one evaluation.
+ *
+ * The direct-child selectors are the point: the clock used to be a pill *inside*
+ * `.tools`, and only `.header > time.clock` can tell the two structures apart.
+ * A missing element throws instead of being skipped, so a header that lost its
+ * clock fails loudly rather than reporting `NaN` boxes.
+ */
+async function headerGeometry(page: Page): Promise<HeaderGeometry> {
+  return await page.evaluate((): HeaderGeometry => {
+    function boxOf(element: Element): HeaderBox {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height
+      };
+    }
+
+    const header = document.querySelector('.header');
+    const tools = document.querySelector('.header > .tools');
+    const clock = document.querySelector('.header > time.clock');
+    const firstTile = document.querySelector('ul.tiles li.tile');
+    if (header === null || tools === null || clock === null || firstTile === null) {
+      throw new Error('the kiosk header must have .tools, its own time.clock and a first tile');
+    }
+    const scrolling = document.scrollingElement ?? document.documentElement;
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      header: boxOf(header),
+      tools: boxOf(tools),
+      clock: boxOf(clock),
+      firstTile: boxOf(firstTile),
+      docScrollWidth: scrolling.scrollWidth,
+      docScrollHeight: scrolling.scrollHeight
+    };
+  });
+}
+
 test('no page scroll and no clipped text at 1024x600, 1920x1080 and 3840x2160', async ({ page }) => {
   const viewports = [
     { width: 1024, height: 600, tiles: 4, chimes: 1 },
@@ -586,4 +651,151 @@ test('the settings shell returns to the kiosk dashboard', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-layout', 'dashboard');
   expect(await page.evaluate(() => sessionStorage.getItem('doorbell.kiosk'))).toBe('1');
   await expect(page.locator('[data-testid="rail-settings"]')).toBeVisible();
+});
+
+/**
+ * cd-qvt2: the kiosk header is title-less and has always kept its pills on the
+ * left; what was wrong is that the clock came with them. It used to live inside
+ * `.tools`, so a `space-between` header had one child and the clock bunched up
+ * next to the status dots (right edge 813 at 1280x720, the regression this test
+ * exists to catch). Now it is `.header`'s own child, pinned to the right gutter
+ * by its auto margin in both modes.
+ *
+ * `expectHealthyLayout` is deliberately not reused here, though this test is
+ * about layout: it also asserts `.content` never scrolls. At 320x568 a
+ * single-column six-tile grid legitimately does scroll — that is the documented
+ * safety valve, not a header failure — so reusing it would either fail a
+ * healthy header or force a weakening of the shared helper. Neither is
+ * acceptable, so this test measures the document and the header itself and
+ * leaves `expectHealthyLayout` exactly as it is.
+ */
+test('cd-qvt2: the kiosk header keeps the pills left and the clock on the right gutter', async ({
+  page
+}) => {
+  // Five page loads against the fake harness; the same headroom argument as the
+  // landscape layout test above.
+  test.setTimeout(120_000);
+
+  /** `--gap`: the same 16px gutter the tile grid spends. */
+  const GUTTER = 16;
+  /**
+   * `getBoundingClientRect()` returns fractions of a layout px, so every
+   * assertion allows ±1px. A real 15px or 17px gutter still fails; a looser
+   * bound would stop proving 16 at all.
+   */
+  const TOLERANCE = 1;
+  /** The pre-existing header height and first-tile top at landscape panels. */
+  const LANDSCAPE_HEADER_HEIGHT = 80;
+  const LANDSCAPE_FIRST_TILE_TOP = 96;
+
+  const viewports = [
+    { width: 1280, height: 720 }, // the reference panel, the size the owner measured
+    { width: 1024, height: 600 }, // the wall panel
+    { width: 1920, height: 1080 },
+    { width: 720, height: 1280 }, // portrait: the clock's own row
+    { width: 320, height: 568 } // the narrowest case the wrap has to survive
+  ];
+
+  for (const viewport of viewports) {
+    const label = `${viewport.width}x${viewport.height}`;
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await openDashboard(page, { tiles: 6, chimes: 0 });
+
+    // The wall stays title-less, and the clock is a `.header` child, not a pill:
+    // a clock still inside `.tools` fails the second count even though every box
+    // below could look plausible.
+    await expect(page.locator('h1.product'), `the kiosk gained a title — ${label}`).toHaveCount(0);
+    await expect(page.locator('.header > .tools'), `no .tools child — ${label}`).toHaveCount(1);
+    await expect(page.locator('.header > time.clock'), `no own time.clock — ${label}`).toHaveCount(
+      1
+    );
+
+    const geometry = await headerGeometry(page);
+
+    const clockInset = geometry.innerWidth - geometry.clock.right;
+    const firstTileTop = geometry.firstTile.top;
+    // The rectangles intersect on both axes: the clock painting over a pill.
+    const overlaps =
+      geometry.clock.right > geometry.tools.left + TOLERANCE &&
+      geometry.clock.left < geometry.tools.right - TOLERANCE &&
+      geometry.clock.bottom > geometry.tools.top + TOLERANCE &&
+      geometry.clock.top < geometry.tools.bottom - TOLERANCE;
+    const detail =
+      `kiosk header at ${label}: tools ${geometry.tools.left.toFixed(2)}→` +
+      `${geometry.tools.right.toFixed(2)}, clock ${geometry.clock.left.toFixed(2)}→` +
+      `${geometry.clock.right.toFixed(2)} (top ${geometry.clock.top.toFixed(2)}, ` +
+      `bottom ${geometry.clock.bottom.toFixed(2)}), header h ` +
+      `${geometry.header.height.toFixed(2)}, first tile top ${firstTileTop.toFixed(2)}, ` +
+      `doc scroll ${geometry.docScrollWidth}x${geometry.docScrollHeight} vs ` +
+      `${geometry.innerWidth}x${geometry.innerHeight}`;
+
+    // Logged before the assertions, so a failure still prints the evidence.
+    console.log(
+      `cd-qvt2 kiosk ${label}: tools left ${geometry.tools.left.toFixed(2)}, clock ` +
+        `${geometry.clock.left.toFixed(2)}→${geometry.clock.right.toFixed(2)}, header h ` +
+        `${geometry.header.height.toFixed(2)}, first tile top ${firstTileTop.toFixed(2)}, ` +
+        `clock inset ${clockInset.toFixed(2)}, doc scroll ` +
+        `${geometry.docScrollWidth}x${geometry.docScrollHeight}`
+    );
+
+    // The owner's decision: the pills stay on the left gutter, and the clock
+    // takes the right one — exactly the viewport minus `--gap`.
+    expect(
+      Math.abs(geometry.tools.left - GUTTER),
+      `the pills do not start on the ${GUTTER}px gutter — ${detail}`
+    ).toBeLessThanOrEqual(TOLERANCE);
+    expect(
+      Math.abs(clockInset - GUTTER),
+      `the clock's right edge is not on the ${GUTTER}px gutter — ${detail}`
+    ).toBeLessThanOrEqual(TOLERANCE);
+
+    // Nothing clipped and nothing off-screen: the wrap must move the clock to
+    // another row, not push it past the edge.
+    expect(geometry.clock.left, `the clock starts off-screen — ${detail}`).toBeGreaterThanOrEqual(0);
+    expect(geometry.clock.right, `the clock ends off-screen — ${detail}`).toBeLessThanOrEqual(
+      geometry.innerWidth
+    );
+    expect(geometry.clock.top, `the clock starts above the viewport — ${detail}`).toBeGreaterThanOrEqual(
+      0
+    );
+    expect(
+      geometry.clock.bottom,
+      `the clock hangs below the header — ${detail}`
+    ).toBeLessThanOrEqual(geometry.header.bottom + TOLERANCE);
+    expect(overlaps, `the clock paints over the pills — ${detail}`).toBe(false);
+
+    // A row that grew a second column instead of wrapping would scroll sideways,
+    // and a header that outgrew the panel would scroll down.
+    expect(
+      geometry.docScrollWidth,
+      `the document scrolls horizontally — ${detail}`
+    ).toBeLessThanOrEqual(geometry.innerWidth + TOLERANCE);
+    expect(
+      geometry.docScrollHeight,
+      `the document scrolls vertically — ${detail}`
+    ).toBeLessThanOrEqual(geometry.innerHeight + TOLERANCE);
+
+    if (viewport.width > viewport.height) {
+      // The pre-existing numbers, re-asserted so the pin cannot buy itself
+      // height: 80px of header puts the first tile 16px lower, at 96.
+      expect(
+        Math.abs(geometry.header.height - LANDSCAPE_HEADER_HEIGHT),
+        `the landscape header is no longer ${LANDSCAPE_HEADER_HEIGHT}px — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+      expect(
+        Math.abs(firstTileTop - LANDSCAPE_FIRST_TILE_TOP),
+        `the first tile no longer starts at ${LANDSCAPE_FIRST_TILE_TOP}px — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    } else {
+      // `.content`'s `padding-block: var(--gap)`. The measured kiosk header
+      // heights are 126 at 720x1280, 270 at 480x800 and 334 at 320x568 — the
+      // clock's wrapped row costs a header-level gap, and 480 sits between two
+      // widths this list runs so a change there is recorded too. Below such a
+      // header the first tile is one gap down; anything else moved the body.
+      expect(
+        Math.abs(firstTileTop - (geometry.header.bottom + GUTTER)),
+        `the first tile is not one ${GUTTER}px gap below the header — ${detail}`
+      ).toBeLessThanOrEqual(TOLERANCE);
+    }
+  }
 });

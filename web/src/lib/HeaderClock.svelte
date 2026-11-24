@@ -34,7 +34,17 @@
 {/if}
 
 <style>
+  /*
+   * The header's inline end (cd-qvt2): the clock is a direct child of `.header`,
+   * after the title and the pills, and the auto margin takes every bit of free
+   * space — so the clock sits on the 16px right gutter in kiosk mode (no title)
+   * exactly as it does in a browser. On a wrapped line it is the only item there,
+   * and an auto margin right-aligns a lone item too. `flex: 0 0 auto` keeps the
+   * digits whole: a shrunk clock would be a clipped clock.
+   */
   .clock {
+    margin-inline-start: auto;
+    flex: 0 0 auto;
     font-family: var(--font-num);
     font-size: var(--text-title);
     font-weight: 600;

@@ -113,8 +113,8 @@
     <div class="tools">
       <StatusDots />
       <HeaderBadges />
-      <HeaderClock />
     </div>
+    <HeaderClock />
   </header>
 
   <div class="body">
@@ -157,19 +157,26 @@
   }
 
   /*
-   * The header spends the same 16px gutter as the tile grid, so `.product`
-   * shares its left edge with the first tile and the header's right-hand
-   * content shares its right edge with the rail control. The horizontal
-   * gutter used to be `clamp(var(--gap), 3vw, calc(var(--gap) * 2))`, which
-   * is 32px at 1280 — that is why the title never lined up with the grid. The
-   * vertical padding is the same token now, so no ad-hoc `1.6vh` value is left
-   * in the dashboard.
+   * The header spends the same 16px gutter as the tile grid: the title (browser
+   * only) and the status pills sit on the left gutter, and the clock pins the
+   * right one (cd-qvt2 — `.clock`'s own `margin-inline-start: auto` does the
+   * pinning, so the title's presence cannot move it). The horizontal gutter used
+   * to be `clamp(var(--gap), 3vw, calc(var(--gap) * 2))`, which is 32px at
+   * 1280 — that is why the title never lined up with the grid. The vertical
+   * padding is the same token now, so no ad-hoc `1.6vh` value is left in the
+   * dashboard.
+   *
+   * `flex-start`, not the `space-between` that used to be here: the clock's auto
+   * margin owns the row's free space, so space-between has nothing left to
+   * distribute — and with `ui.show_clock` off the header is the title plus
+   * `.tools` only, where space-between would throw browser-mode pills to the
+   * right but leave the kiosk ones at the left. One layout in both modes.
    */
   .header {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: var(--gap);
     width: 100%;
     min-height: var(--tap-primary);
