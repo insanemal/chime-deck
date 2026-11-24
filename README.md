@@ -241,7 +241,7 @@ A 1 GB panel is therefore a perfectly good doorbell: it only has to *play* audio
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ChimeDeck — one process, one speaker                             │
+│ ChimeDeck — one process, one speaker                            │
 │                                                                 │
 │  Home Assistant ──▶ MQTT bridge ──▶ press queue ──▶ speaker     │
 │                                                                 │
